@@ -1,0 +1,128 @@
+---
+title: "Prac_ML_Assignment"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, dev = "png")
+```
+
+## First, packages that are needed for the prediction and have not yet been loaded are loaded.
+
+```{r Load packages}
+suppressWarnings(library(ggplot2))
+suppressWarnings(library(caret))
+suppressWarnings(library(randomForest))
+```
+
+## The provided training dataset is loaded into R. After looking at the data, it is clear that there are some descriptive variables (such as the participants' names) that are not useful for prediction. These are removed. The data is then partitioned into training and test datasets, so that the performance of a model built on the training data can be tested on the test data. Afterwards, variables that have almost no variance or where too many values are missing within the training dataset are also filtered out. The test dataset is then altered to only contain variables that also appear in the training dataset.
+
+```{r Load, filter and partition}
+
+setwd("/Users/norafresmann/Documents/Coursera/Practical Machine Learning/Week4/Project")
+weightDat <- read.csv("pml-training.csv")
+weightDat <- weightDat[,-1]
+
+# Remove descriptive columns from entire dataset, as they are not needed for prediction.
+weightDat <- weightDat[,-c(1:6)]
+
+# Partition data in training and testing set.
+set.seed(333)
+inTrain <- createDataPartition(y = weightDat$classe,
+                               p = 0.7,
+                               list = F)
+datTrain <- weightDat[inTrain,]
+datTest <- weightDat[-inTrain,]
+
+# Find columns with near zero variance and remove.
+nsv <- nearZeroVar(datTrain, saveMetrics = T)
+datTrain[,rownames(nsv[nsv$nzv == T,])] <- list(NULL)
+
+# Look at the number of missing values (NA) per variable. It be
+hist(sapply(datTrain, function(x) sum(is.na(x))))
+
+# Remove variables that only contain very few values (over 100 values = NA).
+naCount    <- sapply(datTrain, function(x) sum(is.na(x))) > 100
+datTrain <- datTrain[, naCount==FALSE]
+
+# Look at number of NAs in dataset.
+sum(is.na(datTrain))
+# -> no NAs remain, meaning that all values are complete and no imputing of values is needed
+
+
+# remove variables that were removed from the training dataset from the test dataset
+datTest <- datTest[,(colnames(datTrain))]
+
+```
+
+## A small exploratory data analysis with PCA. The first two components are plotted and points are coloured by the classe variable. Some clusters of samples are visible. However they do not represent the different movement classes.
+
+```{r Explore data, dpi=36}
+
+# Calculate the first two principal components.
+preProc <- preProcess(datTrain[,-53], method = "pca", pcaComp = 2)
+
+# Plot PC1 and PC2.
+spamPC <- predict(preProc, datTrain[,-53])
+plot(spamPC[,1], spamPC[,2], col = datTrain$classe)
+
+```
+
+## A random forest and a generalised boosted model are fitted to the data. These models were chosen as they usually predict very accurately and because the prediction problem is a classification problem (linear regression would thus not do so well).
+## First, A random forest model is trained on the training data. In order to avoid overfitting, cross-validation is very important here! 10-fold crossvalidation is therefore used to train the model. Prediction shows a very high accuracy.
+
+```{r Fit a random forest model and predict}
+
+# model fit with k-fold crossvalidation with k = 10
+set.seed(333)
+controlRF <- trainControl(method = "cv", number = 10, verboseIter = F)
+modFitRF<- train(classe ~ .,
+                          data = datTrain,
+                          method = "rf",
+                          trControl = controlRF)
+modFitRF$finalModel
+
+# predict on testing data
+predRF <- predict(modFitRF, datTest)
+confMatRF <- confusionMatrix(predRF, datTest$classe)
+
+```
+
+# Secondly, a generalised boosted model is fitted to the data, again using 10-fold cross-validation. It does an even better job on the testing dataset than the random forest model.
+
+```{r Fit a boosting model and predict}
+
+# fit a generalised boosted model
+set.seed(333)
+controlGBM <- trainControl(method = "cv", number = 10, verboseIter = F)
+modFitGBM  <- train(classe ~ .,
+                    data = datTrain,
+                    method = "gbm",
+                    trControl = controlGBM,
+                    verbose = F)
+modFitGBM$finalModel
+
+# predict on testing data
+predictGBM <- predict(modFitGBM, newdata = datTest)
+confMatGBM <- confusionMatrix(predictGBM, datTest$classe)
+confMatGBM
+
+```
+
+## Since the generalised boosted model had the smalles prediction error on the test data, it is used to predict on the validation data set (provided testing data file). After loading the data, the variables that were removed during model fitting are also removed here.
+
+```{r Predict on validation data using the GBM}
+
+weightDatVal <- read.csv("pml-testing.csv")
+
+# remove variables that were also removed in the training data
+weightDatVal <- weightDatVal[,(colnames(weightDatVal) %in% colnames(datTrain))]
+
+# predict
+predictGBM <- predict(modFitGBM, newdata = weightDatVal)
+
+
+```
+
